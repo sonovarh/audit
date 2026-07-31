@@ -272,7 +272,7 @@ footer{border-top:1px solid var(--bd);margin-top:30px;padding-top:14px;font-size
     <h1>Verificador de Integridade de Dados — Sonnet x ADP</h1>
     <div class="sub">Sonova do Brasil · Departamento Pessoal · Auditoria de cadastro e remuneração</div>
   </div>
-  <div class="ver">v2.9</div>
+  <div class="ver">v3.0</div>
 </div>
 
 <div class="wrap">
@@ -516,6 +516,7 @@ var FIELDS = {
   ADP: [
     {k:'id',      lbl:'ID SONOVA',                 req:true,  al:['id sonova','sonova id','id_sonova']},
     {k:'matr',    lbl:'Matrícula',                 req:false, al:['matricula','matrícula']},
+    {k:'emp',     lbl:'Empresa - Código',           req:false, al:['empresa - codigo','empresa - código','empresa codigo','codigo empresa','empresa']},
     {k:'filial',  lbl:'Código - Filial',           req:false, al:['codigo - filial','código - filial','filial','cod filial']},
     {k:'nome',    lbl:'Nome Empregado',            req:false, al:['nome empregado','nome do empregado','nome']},
     {k:'cpf',     lbl:'CPF Empregado',             req:false, al:['cpf empregado','cpf']},
@@ -1003,6 +1004,15 @@ function runAudit(){
   var covEcMon = ec.length ? (ec.filter(function(e){ return monIdx[normId(G(e,'EC','id'))]; }).length/ec.length) : 0;
   var exigeMon = (c.exigeMon==='sempre') ? true : (c.exigeMon==='nunca' ? false : (mon.length>0 && covEcMon>=0.5));
 
+  var ctxADP={};
+  adp.forEach(function(a){
+    var i2=normId(G(a,'ADP','id'));
+    if(!i2) return;
+    ctxADP[i2]={matr:normId(G(a,'ADP','matr')),emp:normId(G(a,'ADP','emp')),filial:normId(G(a,'ADP','filial')),
+                cnpj:String(G(a,'ADP','cnpj')||''),nome:String(G(a,'ADP','nome')||''),
+                sit:String(G(a,'ADP','sit')||''),vinc:String(G(a,'ADP','vinculo')||'')};
+  });
+
   var divs=[], chefia=[], adpToSonnet=[], sonnetToAdp=[];
 
   function pushDiv(id,nome,bloco,campo,sev,vAdp,vSon,obs){
@@ -1335,7 +1345,7 @@ function runAudit(){
                 : (base==='Existência na remuneração') ? 'Sonnet'
                 : (base==='Existência no Sonnet') ? 'ADP e Sonnet'
                 : (!d.sonnet || d.sonnet==='(vazio)') ? 'Sonnet' : 'ADP';
-    plano.push({destino:destino,prio:PRIO[d.sev]||'4 - Baixa',sev:d.sev,id:d.id,nome:d.nome,campoAdp:mp.campo,
+    plano.push({destino:destino,campo:d.campo,prio:PRIO[d.sev]||'4 - Baixa',sev:d.sev,id:d.id,nome:d.nome,campoAdp:mp.campo,
                 atual:d.adp,correto:d.sonnet,acao:acao,local:mp.local,obs:mp.obs||d.obs});
   });
   plano.sort(function(x,y){ return (ordem[y.sev]-ordem[x.sev]) || String(x.id).localeCompare(String(y.id)); });
@@ -1438,7 +1448,7 @@ function runAudit(){
     ts:new Date(), cfg:c, excl:excl,
     counts:{ec:ec.length,mon:mon.length,adp:adp.length,ecAll:ecAll.length,monAll:monAll.length,adpAll:adpAll.length},
     divs:divs, chefia:chefia, adpToSonnet:adpToSonnet, sonnetToAdp:sonnetToAdp,
-    pares:pares, plano:plano, qual:qual, impBase:impBase, impSel:impSel, impRows:impRows,
+    pares:pares, plano:plano, qual:qual, impBase:impBase, impSel:impSel, impRows:impRows, ctxADP:ctxADP,
     kpi:{soADP:soADP,soSON:soSON,cruz:cruz,limpos:limpos,semGrave:semGrave,total:divs.length,sev:sevCount,chDiv:chDiv,chNR:chNR,
          aderencia: cruz? (semGrave/cruz*100):0}
   };
@@ -2235,6 +2245,47 @@ function dl(blob,name){
    EXPORTAÇÕES
    ========================================================================== */
 
+
+/* ---------- nomes de aba válidos e únicos ---------- */
+var ABAS_USADAS={};
+function nomeAba(txt){
+  var t=stripAcc(String(txt||'aba')).replace(/[\\\/\?\*\[\]:]/g,' ').replace(/\s+/g,' ').trim();
+  if(!t) t='Aba';
+  if(t.length>31) t=t.slice(0,31).trim();
+  var base=t,n=2;
+  while(ABAS_USADAS[t.toLowerCase()]){
+    var suf=' '+n;
+    t=(base.length+suf.length>31?base.slice(0,31-suf.length):base)+suf;
+    n++;
+  }
+  ABAS_USADAS[t.toLowerCase()]=1;
+  return t;
+}
+var ABA_CURTA={
+  'Data de nascimento':'Nascimento',
+  'Data de admissão':'Admissao',
+  'E-mail':'Email',
+  'Functional Area':'HBA',
+  'Cargo / Função':'Cargo',
+  'Chefia imediata (ID Sonova)':'Chefia',
+  'Existência no ADP':'Ausente no ADP',
+  'Existência no Sonnet':'Ausente no Sonnet',
+  'Existência na remuneração':'Sem remuneracao',
+  'ID Sonova divergente':'ID Sonova'
+};
+function rotuloAba(campo){
+  if(ABA_CURTA[campo]) return ABA_CURTA[campo];
+  if(/^Sal[aá]rio/.test(campo)) return 'Salario';
+  return campo;
+}
+function ctx(id){ return (RES.ctxADP&&RES.ctxADP[id])||{matr:'',emp:'',filial:'',cnpj:'',nome:'',sit:'',vinc:''}; }
+function etypeDe(id){
+  var r=RES.sonnetToAdp.filter(function(x){return x.id===id;})[0];
+  if(r&&r.etype) return r.etype;
+  var pp=RES.pares.filter(function(x){return x.id===id;})[0];
+  return (pp&&pp.etypeSon)||'';
+}
+
 /* ---------- estilo obrigatório das exportações Excel: Calibri Light 8 ---------- */
 var XL_FONT={name:'Calibri Light',sz:8};
 function estilizarAba(ws,linhasCabecalho){
@@ -2262,12 +2313,26 @@ function estilizarAba(ws,linhasCabecalho){
   return ws;
 }
 function addAba(wb,ws,nome,linhasCabecalho){
-  XLSX.utils.book_append_sheet(wb,estilizarAba(ws,linhasCabecalho),nome);
+  var n=nomeAba(nome);
+  XLSX.utils.book_append_sheet(wb,estilizarAba(ws,linhasCabecalho),n);
+  return n;
 }
 
 function exportXlsx(){
   if(!RES||typeof XLSX==='undefined') return;
+  ABAS_USADAS={};
   var wb=XLSX.utils.book_new(), c=RES.cfg, k=RES.kpi;
+  var planoIdx={};
+  RES.plano.forEach(function(r){ planoIdx[r.id+'||'+r.campo]=r; });
+  function linhaSit(d){
+    var x=ctx(d.id), pl=planoIdx[d.id+'||'+d.campo]||{};
+    return {'ID Sonova':d.id,'Matricula':x.matr,'Empresa':x.emp,'Filial':x.filial,'CNPJ':x.cnpj,
+            'Nome':d.nome,'Nome no ADP':x.nome,'Employment Type':etypeDe(d.id),'Vinculo ADP':x.vinc,
+            'Situacao ADP':x.sit,'Bloco':d.bloco,'Campo':d.campo,'Severidade':d.sev,
+            'Valor ADP':d.adp,'Valor Sonnet':d.sonnet,
+            'Sistema a corrigir':pl.destino||'','Prioridade':pl.prio||'','Campo a corrigir':pl.campoAdp||'',
+            'Acao':pl.acao||'','Onde corrigir':pl.local||'','Observacao':d.obs};
+  }
   var resumo=[
     ['Auditoria de integridade Sonnet x ADP'],
     ['Execução',RES.ts.toLocaleString('pt-BR')],
@@ -2320,13 +2385,17 @@ function exportXlsx(){
   ];
   addAba(wb,XLSX.utils.aoa_to_sheet(resumo),'Resumo',1);
   addAba(wb,XLSX.utils.json_to_sheet(RES.plano.map(function(r){
-    return {'Sistema a corrigir':r.destino,'Prioridade':r.prio,'Severidade':r.sev,'ID Sonova':r.id,'Nome':r.nome,'Campo a corrigir':r.campoAdp,
-            'Valor atual no ADP':r.atual,'Valor correto (Sonnet)':r.correto,'Acao':r.acao,'Onde corrigir':r.local,'Observacao':r.obs};
+    var x=ctx(r.id);
+    return {'Sistema a corrigir':r.destino,'Prioridade':r.prio,'Severidade':r.sev,'ID Sonova':r.id,
+            'Matricula':x.matr,'Empresa':x.emp,'Filial':x.filial,'CNPJ':x.cnpj,'Nome':r.nome,
+            'Employment Type':etypeDe(r.id),'Situacao ADP':x.sit,'Campo de origem':r.campo,'Campo a corrigir':r.campoAdp,
+            'Valor atual':r.atual,'Valor correto':r.correto,'Acao':r.acao,'Onde corrigir':r.local,'Observacao':r.obs};
   })),'Corrigir no ADP',1);
-  var parAoa=[['ID Sonova','Nome','CNPJ','Origem','Composicao','Nascimento','Admissao','E-mail','Functional Area','Cargo','Chefia (ID)','Salario mensal','Salario x'+c.mult,'Divergencias']];
+  var parAoa=[['ID Sonova','Matricula','Empresa','Filial','Nome','CNPJ','Origem','Composicao','Nascimento','Admissao','E-mail','Functional Area','Cargo','Chefia (ID)','Salario mensal','Salario x'+c.mult,'Divergencias']];
   RES.pares.forEach(function(pp){
-    parAoa.push([pp.id,pp.nomeSon||pp.nomeAdp,pp.cnpj,'ADP','folha'].concat(pp.cells.map(function(cl){return cl.adp;})).concat([pp.nd]));
-    parAoa.push([pp.id,pp.nomeSon||pp.nomeAdp,pp.cnpj,'Sonnet',pp.comp].concat(pp.cells.map(function(cl){return cl.son;})).concat([pp.nd]));
+    var x=ctx(pp.id);
+    parAoa.push([pp.id,x.matr,x.emp,x.filial,pp.nomeSon||pp.nomeAdp,pp.cnpj,'ADP','folha'].concat(pp.cells.map(function(cl){return cl.adp;})).concat([pp.nd]));
+    parAoa.push([pp.id,x.matr,x.emp,x.filial,pp.nomeSon||pp.nomeAdp,pp.cnpj,'Sonnet',pp.comp].concat(pp.cells.map(function(cl){return cl.son;})).concat([pp.nd]));
   });
   addAba(wb,XLSX.utils.aoa_to_sheet(parAoa),'Comparativo',1);
   var qAoa=[['Qualidade de dados'],[],['Arquivo','Linhas lidas','Colunas','Considerados','Ignorados','IDs duplicados','E-mails duplicados','CPFs duplicados']];
@@ -2351,17 +2420,23 @@ function exportXlsx(){
   RES.qual.porCNPJ.forEach(function(x){ qAoa.push([x.k,x.tot,x.ok,x.div,x.tot?+(x.ok/x.tot*100).toFixed(1):0]); });
   addAba(wb,XLSX.utils.aoa_to_sheet(qAoa),'Qualidade',1);
   addAba(wb,XLSX.utils.json_to_sheet(RES.adpToSonnet.map(function(r){
-    return {'ID Sonova':r.id,'Matricula':r.matr,'Nome ADP':r.nome,'CNPJ':r.cnpj,'No EC':r.ec,'No Monthly':r.mon,'Divergencias':r.divs,'Severidade':r.sev,'Observacao':r.detalhe};
+    var x=ctx(r.id);
+    return {'ID Sonova':r.id,'Matricula':r.matr,'Empresa':x.emp,'Filial':x.filial,'CNPJ':r.cnpj,'Nome ADP':r.nome,
+            'Situacao ADP':x.sit,'Vinculo ADP':x.vinc,'No EC':r.ec,'Na remuneracao':r.mon,
+            'Divergencias':r.divs,'Severidade':r.sev,'Observacao':r.detalhe};
   })),'ADP para Sonnet',1);
   addAba(wb,XLSX.utils.json_to_sheet(RES.sonnetToAdp.map(function(r){
-    return {'ID Sonova':r.id,'Nome Sonnet':r.nome,'Origem':r.origem,'Status':r.status,'Employment Type':r.etype||'','Functional Area':r.farea,'Admissao':r.admissao,'No ADP':r.adp,'No Monthly':r.mon,'Divergencias':r.divs,'Severidade':r.sev,'Observacao':r.detalhe};
+    var x=ctx(r.id);
+    return {'ID Sonova':r.id,'Matricula':x.matr,'Empresa':x.emp,'Filial':x.filial,'CNPJ':x.cnpj,
+            'Nome Sonnet':r.nome,'Origem':r.origem,'Status':r.status,'Employment Type':r.etype||'',
+            'Functional Area':r.farea,'Admissao':r.admissao,'No ADP':r.adp,'Na remuneracao':r.mon,
+            'Divergencias':r.divs,'Severidade':r.sev,'Observacao':r.detalhe};
   })),'Sonnet para ADP',1);
-  addAba(wb,XLSX.utils.json_to_sheet(RES.divs.map(function(d){
-    return {'ID Sonova':d.id,'Nome':d.nome,'Bloco':d.bloco,'Campo':d.campo,'Severidade':d.sev,'Valor ADP':d.adp,'Valor Sonnet':d.sonnet,'Observacao':d.obs};
-  })),'Divergencias',1);
+  addAba(wb,XLSX.utils.json_to_sheet(RES.divs.map(linhaSit)),'Divergencias',1);
   addAba(wb,XLSX.utils.json_to_sheet(RES.chefia.map(function(r){
-    return {'ID Sonova':r.id,'Colaborador':r.nome,'Chefia ADP':r.chefeAdp,'Matricula chefia':r.matr,'Estab chefia':r.estab,'ID Sonova resolvido':r.idResolv,'Origem do ID':r.via,'Confianca':r.conf,'Chefia Sonnet':r.chefeSonnet,'ID Sonnet':r.idSonnet,'Situacao':r.status};
-  })),'Chefia',1);
+    var x=ctx(r.id);
+    return {'ID Sonova':r.id,'Matricula':x.matr,'Empresa':x.emp,'Filial':x.filial,'Colaborador':r.nome,'Chefia ADP':r.chefeAdp,'Matricula chefia':r.matr,'Estab chefia':r.estab,'ID Sonova resolvido':r.idResolv,'Origem do ID':r.via,'Confianca':r.conf,'Chefia Sonnet':r.chefeSonnet,'ID Sonnet':r.idSonnet,'Situacao':r.status};
+  })),'Resolucao de chefia',1);
   /* ---- template de importação SuccessFactors ---- */
   var vg=String(c.vigencia||'');
   var mv=vg.match(/^(\d{4})-(\d{2})-(\d{2})$/);
@@ -2384,7 +2459,8 @@ function exportXlsx(){
   addAba(wb,wsImp,'PayComponentRecurringImportTemp',2);
 
   addAba(wb,XLSX.utils.json_to_sheet(RES.impBase.map(function(x){
-    return {'ID Sonova':x.id,'Nome':x.nome,'CNPJ':x.cnpj,'Matricula ADP':x.matr,
+    var q2=ctx(x.id);
+    return {'ID Sonova':x.id,'Matricula':x.matr,'Empresa':q2.emp,'Filial':q2.filial,'Nome':x.nome,'CNPJ':x.cnpj,
             'Salario Mensal ADP':x.mensal,'Multiplicador':x.mult,'Valor anual':x.anual,'FTE':x.fte,
             'Base Salary 100%':x.v100,'Base Salary Pro-Rated':x.vpro,
             'Pro-Rated atual no Sonnet':x.sonPro===null?'':x.sonPro,
@@ -2392,6 +2468,37 @@ function exportXlsx(){
             'Diferenca':x.dif===null?'':x.dif,'Situacao':x.motivo,
             'Entrou no template':(c.escopo==='todos'||(c.escopo==='difsem'&&(x.divergente||x.semSonnet))||(c.escopo==='dif'&&x.divergente))?'Sim':'Nao'};
   })),'Base da correcao salarial',1);
+
+  /* ---- uma aba por tipo de situação ---- */
+  var grupos={};
+  RES.divs.forEach(function(d){
+    var g=rotuloAba(d.campo);
+    if(!grupos[g]) grupos[g]={rot:g,campos:{},itens:[]};
+    grupos[g].campos[d.campo]=1;
+    grupos[g].itens.push(d);
+  });
+  var ordSev={CRITICO:4,ALTO:3,MEDIO:2,INFO:1};
+  var chaves=Object.keys(grupos).sort(function(a,b){ return grupos[b].itens.length-grupos[a].itens.length; });
+  var indice=[['Indice de abas por situacao'],[],
+              ['Aba','Situacao','Ocorrencias','Criticas','Altas','Medias','Info','ADP','Sonnet','Sem acao']];
+  chaves.forEach(function(g){
+    var it=grupos[g].itens.slice().sort(function(a,b){
+      return (ordSev[b.sev]-ordSev[a.sev]) || String(a.id).localeCompare(String(b.id));
+    });
+    var nome=addAba(wb,XLSX.utils.json_to_sheet(it.map(linhaSit)),g,1);
+    grupos[g].aba=nome;
+    var cnt={CRITICO:0,ALTO:0,MEDIO:0,INFO:0},dst={};
+    it.forEach(function(d){
+      cnt[d.sev]=(cnt[d.sev]||0)+1;
+      var pl=planoIdx[d.id+'||'+d.campo];
+      var dd=pl?pl.destino:'Sem acao';
+      dst[dd]=(dst[dd]||0)+1;
+    });
+    indice.push([nome,Object.keys(grupos[g].campos).join(' / '),it.length,
+                 cnt.CRITICO,cnt.ALTO,cnt.MEDIO,cnt.INFO,
+                 dst['ADP']||0,(dst['Sonnet']||0)+(dst['ADP e Sonnet']||0),(dst['Sem acao']||0)+(dst['Nenhum']||0)]);
+  });
+  addAba(wb,XLSX.utils.aoa_to_sheet(indice),'Indice de situacoes',3);
 
   var h=getHist();
   if(h.length) addAba(wb,XLSX.utils.json_to_sheet(h.map(function(x){
